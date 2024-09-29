@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <title>WebRTC Example</title>
+  <style>
+    body {
+      margin: 0;
+      position: relative;
+      height: 100vh;
+    }
+    .container{
+      width: 100%;
+      height: 100vh;
+      position: relative;
+      display: flex;
+      align-items: center;
+      flex-direction: column;
+    }
+    .primary {
+      width: 100%;
+      object-fit: cover;
+      object-position: center;
+    }
+    .secondary{
+      width: 500px;
+      height: 200px;
+      z-index: 2;
+      position: absolute;
+      bottom: 10%;
+      left: 50px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <video id="web" class="primary" autoplay playsinline></video>
+  </div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const video = document.querySelector('#web');
+    const socket = io();
+    let localStream;
+    const peers = {};
+
+    function videoToggle(){
+      let toggle = true;
+      let videotags = document.querySelectorAll('video');
+      videotags.forEach(elem=>{
+        elem.addEventListener('click',()=>{
+          if(toggle){
+            if(videotags[0]==elem){
+              return null;
+            }
+            document.querySelector('.primary').classList.replace('primary','secondary')
+            elem.classList.add('primary')
+            toggle = false
+          } else {
+            document.querySelector('.primary').classList.replace('primary', 'secondary')
+            elem.classList.add('primary')
+            toggle = true
+          }
+        })
+      })
+    }
+    
+    // Access webcam
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(stream => {
+        localStream = stream;
+        video.srcObject = stream;
+
+        // Notify others about the new user
+        socket.emit('new-user');
+      })
+      .catch(error => {
+        console.error("Error accessing webcam:", error);
+      });
+
+    // When a new user joins, the existing user should create an offer
+      socket.on('new-user', userId => {
+        console.log(`New user connected: ${userId}`);
+        createPeerConnection(userId);
+
+        peers[userId].createOffer()
+          .then(offer => peers[userId].setLocalDescription(offer))
+          .then(() => {
+            socket.emit('offer', { offer: peers[userId].localDescription, userId });
+          })
+          .catch(error => console.error('Error creating offer:', error));
+      });
+
+      socket.on('user-disconnected', userId => {
+          console.log(`User disconnected: ${userId}`);
+
+          // Close the peer connection and remove the video element
+          if (peers[userId]) {
+            peers[userId].close();
+            delete peers[userId];
+
+            // Optionally remove the remote video element from the DOM
+            const remoteVideo = document.querySelector(`[data-userid="${userId}"]`);
+            if (remoteVideo) {
+              remoteVideo.remove();
+            }
+          }
+        });
+
+
+    socket.on('offer', data => {
+      const { offer, userId } = data;
+      console.log(`Received offer from ${userId}`);
+      createPeerConnection(userId);
+      peers[userId].setRemoteDescription(new RTCSessionDescription(offer))
+        .then(() => peers[userId].createAnswer())
+        .then(answer => peers[userId].setLocalDescription(answer))
+        .then(() => {
+          socket.emit('answer', { answer: peers[userId].localDescription, userId });
+        });
+    });
+
+    socket.on('answer', data => {
+      const { answer, userId } = data;
+      console.log(`Received answer from ${userId}`);
+      peers[userId].setRemoteDescription(new RTCSessionDescription(answer));
+    });
+
+    socket.on('ice-candidate', data => {
+      const { candidate, userId } = data;
+      console.log(`Received ICE candidate from ${userId}`);
+      peers[userId].addIceCandidate(new RTCIceCandidate(candidate));
+    });
+
+    function createPeerConnection(userId) {
+        console.log(`Creating peer connection for ${userId}`);
+        const peerConnection = new RTCPeerConnection();
+
+        // Add local stream to the peer connection
+        localStream.getTracks().forEach(track => {
+          peerConnection.addTrack(track, localStream);
+        });
+
+        // Add this debug statement
+        console.log('Added local tracks to peer connection.');
+
+        // Handle incoming tracks
+         peerConnection.ontrack = (event) => {
+          console.log('Track received:', event);
+          let remoteVideo = document.createElement('video');
+          remoteVideo.srcObject = event.streams[0];
+          remoteVideo.autoplay = true;
+          remoteVideo.classList.add('primary')
+          remoteVideo.playsinline = true;
+          remoteVideo.width = 500; // You can customize dimensions
+          document.querySelector('.container').appendChild(remoteVideo);
+        };
+
+
+        // Handle ICE candidates
+        peerConnection.onicecandidate = event => {
+          if (event.candidate) {
+            console.log(`ICE candidate for ${userId}`);
+            socket.emit('ice-candidate', { candidate: event.candidate, userId });
+          }
+        };
+
+        // Store the peer connection
+        peers[userId] = peerConnection;
+      }
+  </script>
+</body>
+
+</html>
