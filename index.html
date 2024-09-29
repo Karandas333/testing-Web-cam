@@ -2,173 +2,198 @@
 <html lang="en">
 
 <head>
-  <meta charset="utf-8">
-  <title>WebRTC Example</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebRTC Chat App</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.5/gsap.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
   <style>
     body {
-      margin: 0;
+      font-family: 'Poppins', sans-serif;
+    }
+
+    .chat-container {
+      max-height: 400px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      background-color: #f9f9f9;
+    }
+
+    .message {
+      margin-bottom: 10px;
+      padding: 10px 15px;
+      border-radius: 10px;
+      max-width: 75%;
+      word-wrap: break-word;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      transition: transform 0.3s ease;
+    }
+
+    .my-message {
+      background-color: #dcf8c6;
+      /* Light green */
+      margin-left: auto;
+    }
+
+    .other-message {
+      background-color: #ffffff;
+      /* White */
+      margin-right: auto;
+    }
+
+    .timestamp {
+      font-size: 0.75rem;
+      color: gray;
+    }
+
+    /* Animation styles */
+    .fade-in {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+
+    .video-container {
       position: relative;
-      height: 100vh;
+      overflow: hidden;
+      border-radius: 10px;
     }
-    .container{
-      width: 100%;
-      height: 100vh;
-      position: relative;
-      display: flex;
-      align-items: center;
-      flex-direction: column;
+
+    video {
+      border-radius: 10px;
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
     }
-    .primary {
-      width: 100%;
-      object-fit: cover;
-      object-position: center;
-    }
-    .secondary{
-      width: 500px;
-      height: 200px;
-      z-index: 2;
-      position: absolute;
-      bottom: 10%;
-      left: 50px;
+
+    video:hover {
+      transform: scale(1.05);
+      box-shadow: 0 4px 15px rgba(0, 123, 255, 0.5);
     }
   </style>
 </head>
 
-<body>
-  <div class="container">
-    <video id="web" class="primary" autoplay playsinline></video>
+<body class="bg-gray-100 flex flex-col items-center justify-center min-h-screen p-5">
+
+  <div class="bg-white shadow-xl rounded-lg w-full max-w-3xl overflow-hidden">
+    <div class="p-4 border-b border-gray-300 flex justify-between items-center">
+      <h1 class="text-2xl font-bold text-gray-800">WebRTC Video Chat</h1>
+      <button id="startButton"
+        class="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-lg hover:bg-blue-700 transition duration-200">
+        Start Connection
+      </button>
+    </div>
+
+    <div class="flex flex-col md:flex-row">
+      <div class="w-full video-container">
+        <video id="localVideo" autoplay muted class="w-full h-64 object-cover bg-gray-300"></video>
+      </div>
+      <div class="w-full video-container mt-4 md:mt-0 md:ml-4">
+        <video id="remoteVideo" autoplay class="w-full h-64 object-cover bg-gray-300"></video>
+      </div>
+    </div>
+
+    <div class="p-4">
+      <h2 class="text-xl font-semibold text-gray-700 mb-2">Chat</h2>
+      <div id="chatContainer" class="chat-container p-2 mb-4">
+        <!-- Chat messages will appear here -->
+      </div>
+      <div class="flex">
+        <input type="text" id="chatInput" placeholder="Type a message..."
+          class="flex-grow border border-gray-300 rounded-lg p-2 focus:outline-none focus:border-blue-400">
+        <button id="sendButton"
+          class="ml-2 px-4 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition duration-200">
+          Send
+        </button>
+      </div>
+    </div>
   </div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script>
-    const video = document.querySelector('#web');
+    const startButton = document.getElementById('startButton');
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
+    const chatContainer = document.getElementById('chatContainer');
+    const chatInput = document.getElementById('chatInput');
+    const sendButton = document.getElementById('sendButton');
+
     const socket = io();
+
     let localStream;
-    const peers = {};
+    let peerConnection;
+    const config = {
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    };
 
-    function videoToggle(){
-      let toggle = true;
-      let videotags = document.querySelectorAll('video');
-      videotags.forEach(elem=>{
-        elem.addEventListener('click',()=>{
-          if(toggle){
-            if(videotags[0]==elem){
-              return null;
-            }
-            document.querySelector('.primary').classList.replace('primary','secondary')
-            elem.classList.add('primary')
-            toggle = false
-          } else {
-            document.querySelector('.primary').classList.replace('primary', 'secondary')
-            elem.classList.add('primary')
-            toggle = true
-          }
-        })
-      })
-    }
-    
-    // Access webcam
-    navigator.mediaDevices.getUserMedia({ video: true })
-      .then(stream => {
-        localStream = stream;
-        video.srcObject = stream;
+    startButton.onclick = async () => {
+      await startConnection();
+    };
 
-        // Notify others about the new user
-        socket.emit('new-user');
-      })
-      .catch(error => {
-        console.error("Error accessing webcam:", error);
-      });
-
-    // When a new user joins, the existing user should create an offer
-      socket.on('new-user', userId => {
-        console.log(`New user connected: ${userId}`);
-        createPeerConnection(userId);
-
-        peers[userId].createOffer()
-          .then(offer => peers[userId].setLocalDescription(offer))
-          .then(() => {
-            socket.emit('offer', { offer: peers[userId].localDescription, userId });
-          })
-          .catch(error => console.error('Error creating offer:', error));
-      });
-
-      socket.on('user-disconnected', userId => {
-          console.log(`User disconnected: ${userId}`);
-
-          // Close the peer connection and remove the video element
-          if (peers[userId]) {
-            peers[userId].close();
-            delete peers[userId];
-
-            // Optionally remove the remote video element from the DOM
-            const remoteVideo = document.querySelector(`[data-userid="${userId}"]`);
-            if (remoteVideo) {
-              remoteVideo.remove();
-            }
-          }
-        });
-
-
-    socket.on('offer', data => {
-      const { offer, userId } = data;
-      console.log(`Received offer from ${userId}`);
-      createPeerConnection(userId);
-      peers[userId].setRemoteDescription(new RTCSessionDescription(offer))
-        .then(() => peers[userId].createAnswer())
-        .then(answer => peers[userId].setLocalDescription(answer))
-        .then(() => {
-          socket.emit('answer', { answer: peers[userId].localDescription, userId });
-        });
-    });
-
-    socket.on('answer', data => {
-      const { answer, userId } = data;
-      console.log(`Received answer from ${userId}`);
-      peers[userId].setRemoteDescription(new RTCSessionDescription(answer));
-    });
-
-    socket.on('ice-candidate', data => {
-      const { candidate, userId } = data;
-      console.log(`Received ICE candidate from ${userId}`);
-      peers[userId].addIceCandidate(new RTCIceCandidate(candidate));
-    });
-
-    function createPeerConnection(userId) {
-        console.log(`Creating peer connection for ${userId}`);
-        const peerConnection = new RTCPeerConnection();
-
-        // Add local stream to the peer connection
-        localStream.getTracks().forEach(track => {
-          peerConnection.addTrack(track, localStream);
-        });
-
-        // Add this debug statement
-        console.log('Added local tracks to peer connection.');
-
-        // Handle incoming tracks
-         peerConnection.ontrack = (event) => {
-          console.log('Track received:', event);
-          let remoteVideo = document.createElement('video');
-          remoteVideo.srcObject = event.streams[0];
-          remoteVideo.autoplay = true;
-          remoteVideo.classList.add('primary')
-          remoteVideo.playsinline = true;
-          remoteVideo.width = 500; // You can customize dimensions
-          document.querySelector('.container').appendChild(remoteVideo);
-        };
-
-
-        // Handle ICE candidates
-        peerConnection.onicecandidate = event => {
-          if (event.candidate) {
-            console.log(`ICE candidate for ${userId}`);
-            socket.emit('ice-candidate', { candidate: event.candidate, userId });
-          }
-        };
-
-        // Store the peer connection
-        peers[userId] = peerConnection;
+    sendButton.onclick = () => {
+      const message = chatInput.value;
+      if (message) {
+        const timestamp = new Date().toLocaleTimeString();
+        socket.emit('chat-message', { text: message, time: timestamp });
+        appendMessage(`You: ${message} <span class="timestamp">${timestamp}</span>`, true);
+        chatInput.value = '';
       }
+    };
+
+    socket.on('chat-message', (data) => {
+      appendMessage(`${data.text} <span class="timestamp">${data.time}</span>`, false);
+    });
+
+    async function startConnection() {
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localVideo.srcObject = localStream;
+
+      peerConnection = new RTCPeerConnection(config);
+      peerConnection.onicecandidate = event => {
+        if (event.candidate) {
+          socket.emit('ice-candidate', event.candidate);
+        }
+      };
+
+      peerConnection.ontrack = event => {
+        remoteVideo.srcObject = event.streams[0];
+      };
+
+      localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      socket.emit('video-offer', offer);
+    }
+
+    socket.on('video-offer', async (offer) => {
+      if (!peerConnection) {
+        await startConnection();
+      }
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      socket.emit('video-answer', answer);
+    });
+
+    socket.on('video-answer', answer => {
+      peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+    });
+
+    socket.on('ice-candidate', candidate => {
+      peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+    });
+
+    function appendMessage(message, isMyMessage) {
+      const messageElement = document.createElement('div');
+      messageElement.innerHTML = message; // Use innerHTML to allow timestamps
+      messageElement.className = `message ${isMyMessage ? 'my-message' : 'other-message'} fade-in`;
+
+      // Animate new message
+      gsap.fromTo(messageElement, { opacity: 0, y: 20 }, { duration: 0.5, opacity: 1, y: 0 });
+
+      chatContainer.appendChild(messageElement);
+      chatContainer.scrollTop = chatContainer.scrollHeight; // Auto-scroll
+    }
   </script>
 </body>
 

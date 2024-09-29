@@ -1,44 +1,46 @@
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
-const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
-// Serve index.html when accessing the root
+// Serve the static HTML file
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+    res.sendFile(__dirname + '/index.html');
 });
 
+// Handle socket connections
 io.on('connection', (socket) => {
-  console.log('A user connected: ' + socket.id);
+    console.log('A user connected: ' + socket.id);
 
-  // Inform others about the new user
-  socket.broadcast.emit('new-user', socket.id);
+    // Forward video offer, answer, and ice candidates to other users
+    socket.on('video-offer', (offer) => {
+        socket.broadcast.emit('video-offer', offer);
+    });
 
-  socket.on('offer', (data) => {
-    socket.broadcast.emit('offer', { offer: data.offer, userId: data.userId });
-  });
+    socket.on('video-answer', (answer) => {
+        socket.broadcast.emit('video-answer', answer);
+    });
 
-  socket.on('answer', (data) => {
-    socket.broadcast.emit('answer', { answer: data.answer, userId: data.userId });
-  });
+    socket.on('ice-candidate', (candidate) => {
+        socket.broadcast.emit('ice-candidate', candidate);
+    });
 
-  socket.on('ice-candidate', (data) => {
-    socket.broadcast.emit('ice-candidate', { candidate: data.candidate, userId: data.userId });
-  });
+    // Handle chat messages
+    socket.on('chat-message', (message) => {
+        socket.broadcast.emit('chat-message', message);
+    });
 
-  socket.on('disconnect', () => {
-  console.log('A user disconnected: ' + socket.id);
-  // Notify remaining users about the disconnection
-  socket.broadcast.emit('user-disconnected', socket.id);
+    // Handle user disconnection
+    socket.on('disconnect', () => {
+        console.log('User disconnected: ' + socket.id);
+    });
 });
 
-
-});
-
-server.listen(3000, () => {
-  console.log('Server is running on port 3000');
+// Start the server
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
 });
